@@ -18,7 +18,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 
-def main(resume=False, eval_only=False):
+def main(resume=False, eval_only=False, remaining_only=False):
     print("=" * 60)
     print("LAB 18: PRODUCTION RAG PIPELINE")
     print("=" * 60)
@@ -28,18 +28,74 @@ def main(resume=False, eval_only=False):
     os.makedirs("reports", exist_ok=True)
 
     if eval_only:
+        from config import EVAL_EMBEDDING_MODEL, LLM_MODEL
         from src.m4_eval import evaluate_ragas, failure_analysis, save_report
 
-        for filename in ("naive_baseline_report.json", "ragas_report.json"):
+        filenames = ("ragas_report.json",) if remaining_only else ("naive_baseline_report.json", "ragas_report.json")
+        for filename in filenames:
             path = os.path.join("reports", filename)
             with open(path, encoding="utf-8") as handle:
                 report = json.load(handle)
-            if report.get("evaluation", {}).get("status") == "measured":
+            evaluation = report.get("evaluation", {})
+            configuration = evaluation.get("configuration", {})
+            if (
+                evaluation.get("status") == "measured"
+                and configuration.get("llm_model") == LLM_MODEL
+                and configuration.get("embedding_model") == EVAL_EMBEDDING_MODEL
+            ):
                 print(f"Keeping measured report: {filename}")
                 continue
-            samples = report.get("evaluation", {}).get("samples", [])
+            samples = evaluation.get("samples", []) or report.get("per_question", [])
             if not samples:
                 raise SystemExit(f"No saved answers in {filename}; run the pipeline first.")
+            if remaining_only:
+                from pathlib import Path
+
+                from src.m4_eval import EvalResult
+
+                fields = ("question", "answer", "contexts", "ground_truth")
+                cached = [
+                    json.loads(p.read_text(encoding="utf-8")) for p in Path("reports/.evaluation-cache").glob("*.json")
+                ]
+                rows = [None] * len(samples)
+                judges = [None] * len(samples)
+                for index, sample in enumerate(samples):
+                    for entry in cached:
+                        if all(entry["result"][key] == sample[key] for key in fields):
+                            rows[index] = EvalResult(**entry["result"])
+                            judges[index] = entry["configuration"]
+                            break
+                missing = [index for index, row in enumerate(rows) if row is None]
+                print(
+                    f"Keeping {len(samples) - len(missing)} measured questions; sending only {len(missing)} remaining."
+                )
+                if missing:
+                    result = evaluate_ragas(*[[samples[index][key] for index in missing] for key in fields])
+                    if result["status"] != "measured":
+                        raise SystemExit(result["error"])
+                    for index, row in zip(missing, result["per_question"]):
+                        rows[index] = row
+                        judges[index] = result["configuration"]
+                metrics = ("faithfulness", "answer_relevancy", "context_precision", "context_recall")
+                result = {
+                    **{key: sum(getattr(row, key) for row in rows) / len(rows) for key in metrics},
+                    "per_question": rows,
+                    "status": "measured",
+                    "resume_seconds": time.time() - start,
+                    "configuration": {
+                        "evaluation_mode": "mixed_evaluators",
+                        "per_question": [dict(question=row.question, **judge) for row, judge in zip(rows, judges)],
+                        "comparison_note": "Baseline uses OpenRouter; Production combines OpenRouter and Gemini. Delta is not a controlled same-evaluator comparison.",
+                    },
+                }
+                if "latency" in evaluation:
+                    result["latency"] = evaluation["latency"]
+                    if "evaluation_seconds" in result["latency"]:
+                        result["latency"]["historical_attempt_evaluation_seconds"] = result["latency"].pop(
+                            "evaluation_seconds"
+                        )
+                save_report(result, failure_analysis(rows, bottom_n=5), path)
+                continue
             result = evaluate_ragas(
                 *[[sample[key] for sample in samples] for key in ("question", "answer", "contexts", "ground_truth")]
             )
@@ -137,5 +193,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--eval-only", action="store_true", help="Evaluate saved answers without rebuilding the pipeline"
     )
+    parser.add_argument(
+        "--remaining-only",
+        action="store_true",
+        help="Keep measured questions across providers; explicitly report mixed evaluators",
+    )
     args = parser.parse_args()
-    main(resume=args.resume, eval_only=args.eval_only)
+    main(resume=args.resume, eval_only=args.eval_only, remaining_only=args.remaining_only)

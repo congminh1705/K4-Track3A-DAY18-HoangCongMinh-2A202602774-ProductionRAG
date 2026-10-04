@@ -55,6 +55,46 @@ def test_evaluation_resumes_only_matching_measured_questions(monkeypatch, tmp_pa
     assert calls == ["first", "second", "second"]
 
 
+def test_remaining_only_sends_no_previously_measured_questions(monkeypatch, tmp_path):
+    import json
+    from dataclasses import asdict
+
+    import config
+    import main as entrypoint
+    import src.m4_eval as evaluator
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(entrypoint.os, "chdir", lambda path: None)
+    monkeypatch.setattr(config, "REPORTS_DIR", str(tmp_path / "reports"))
+    cache = tmp_path / "reports/.evaluation-cache"
+    cache.mkdir(parents=True)
+    first = evaluator.EvalResult("first", "a", ["c"], "g", 1, 1, 1, 1)
+    second = evaluator.EvalResult("second", "b", ["d"], "h", 1, 1, 1, 1)
+    (cache / "existing.json").write_text(
+        json.dumps({"result": asdict(first), "configuration": {"llm_model": "old-judge"}}), encoding="utf-8"
+    )
+    production = tmp_path / "reports/ragas_report.json"
+    production.write_text(
+        json.dumps({"evaluation": {"status": "unavailable", "samples": [asdict(first), asdict(second)]}}),
+        encoding="utf-8",
+    )
+    baseline = tmp_path / "reports/naive_baseline_report.json"
+    baseline.write_text('{"keep": true}', encoding="utf-8")
+    sent = []
+
+    def fake_evaluate(questions, *args):
+        sent.extend(questions)
+        return {"status": "measured", "per_question": [second], "configuration": {"llm_model": "new-judge"}}
+
+    monkeypatch.setattr(evaluator, "evaluate_ragas", fake_evaluate)
+    entrypoint.main(eval_only=True, remaining_only=True)
+    assert sent == ["second"]
+    result = json.loads(production.read_text(encoding="utf-8"))
+    assert result["num_questions"] == 2
+    assert result["evaluation"]["configuration"]["evaluation_mode"] == "mixed_evaluators"
+    assert baseline.read_text(encoding="utf-8") == '{"keep": true}'
+
+
 def test_parent_ids_are_unique_and_chunks_bounded():
     a, children = chunk_hierarchical("word " * 100, parent_size=80, child_size=20, metadata={"source": "a"})
     b, _ = chunk_hierarchical("word " * 100, parent_size=80, child_size=20, metadata={"source": "b"})

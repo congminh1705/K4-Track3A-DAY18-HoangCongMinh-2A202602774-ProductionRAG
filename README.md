@@ -221,7 +221,7 @@ Khi report thay đổi, cần đối chiếu và cập nhật phân tích theo k
 Endpoint embedding OpenRouter đã được kiểm tra theo
 [tài liệu chính thức](https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings).
 Sau khi được chấp thuận gửi corpus lab, đã chạy evaluation online thay cho report chưa đo.
-Historical successful-run metrics and exit status are retained in `reports/verification.json`. The recovered production report contains aggregate metrics only; original per-question scores are unavailable. Failed evaluations cannot overwrite a successful report, and existing analysis is preserved.
+Historical successful-run metrics and exit status are retained in `reports/verification.json`. The current production report contains 20 measured per-question results: 11 retained OpenRouter checkpoints and 9 Gemini evaluations. The original overwritten report remains unavailable; these are the transparently resumed measurements. Failed evaluations cannot overwrite a successful report, and existing analysis is preserved.
 
 Có thể dùng `python main.py --resume` khi phiên chạy bị ngắt. Baseline được dùng
 lại khi evaluator và bộ Q&A khớp; enrichment/câu trả lời lưu theo fingerprint.
@@ -238,3 +238,20 @@ câu hỏi, đáp án, context, ground truth và cấu hình evaluator khớp.
 RAGAS chạy tuần tự, giới hạn output 1.024 tokens; lỗi một câu không được ghi đè
 report thành công và không làm mất các câu đã đo. HTTP 402 cần kiểm tra số dư
 tài khoản API, không phải chỉ hạn mức của key.
+
+### Gemini và phạm vi tiếp tục đánh giá
+
+Gemini dùng endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`,
+chat model `gemini-3.1-flash-lite` và embedding model `gemini-embedding-001`.
+Xem [tài liệu tương thích OpenAI của Google](https://ai.google.dev/gemini-api/docs/openai).
+RAGAS tạo các candidate tuần tự vì model không hỗ trợ nhiều candidate trong một
+request; các request cách nhau ít nhất 15 giây để hạn chế lỗi quota.
+Gemini dùng reasoning `low` và output tối đa 4.096 tokens để hạn chế JSON bị cắt.
+
+Theo phạm vi được cho phép, chỉ gửi các câu chưa đo bằng
+`python main.py --eval-only --remaining-only`. Lệnh giữ nguyên baseline và tìm
+checkpoint khớp câu hỏi/đáp án/context/ground truth trước khi gửi dữ liệu.
+Báo cáo ghi `mixed_evaluators` cùng cấu hình từng câu nếu có nhiều evaluator.
+Delta với baseline khi đó không phải so sánh có kiểm soát bằng cùng evaluator;
+không diễn giải chênh lệch chỉ do thay đổi pipeline. Nếu muốn so sánh đồng nhất,
+cần đánh giá lại cả hai hệ thống bằng một evaluator sau khi được phép gửi dữ liệu.

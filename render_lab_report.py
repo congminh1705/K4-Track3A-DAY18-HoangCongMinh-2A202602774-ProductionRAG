@@ -7,14 +7,16 @@ ROOT = Path(__file__).resolve().parent
 METRICS = ("faithfulness", "answer_relevancy", "context_precision", "context_recall")
 
 
-def main():
+def main(update=False):
     production = json.loads((ROOT / "reports/ragas_report.json").read_text(encoding="utf-8"))
     baseline = json.loads((ROOT / "reports/naive_baseline_report.json").read_text(encoding="utf-8"))
     analysis_path = ROOT / "analysis/failure_analysis.md"
-    if analysis_path.exists():
+    measured = production.get("evaluation", {}).get("status") == "measured"
+    if update and not measured:
+        raise SystemExit("Cannot replace analysis with an unmeasured report.")
+    if analysis_path.exists() and not update:
         print("Keeping existing failure_analysis.md; review new reports before updating analysis.")
         return
-    measured = production.get("evaluation", {}).get("status") == "measured"
     both_measured = measured and baseline.get("evaluation", {}).get("status") == "measured"
     lines = [
         "# Failure Analysis — Lab 18",
@@ -32,6 +34,14 @@ def main():
             lines.append(f"| {metric} | {a:.4f} | {b:.4f} | {b - a:+.4f} |")
         else:
             lines.append(f"| {metric} | Chưa đo | Chưa đo | N/A |")
+    configuration = production.get("evaluation", {}).get("configuration", {})
+    if configuration.get("evaluation_mode") == "mixed_evaluators":
+        lines += [
+            "",
+            "Production giữ 11 câu đã đo bằng OpenRouter và chỉ gửi 9 câu còn lại tới Gemini.",
+            "Baseline giữ evaluator OpenRouter. Delta không phải so sánh có kiểm soát bằng cùng evaluator;",
+            "không kết luận chênh lệch chỉ do pipeline. JSON ghi cấu hình evaluator cho từng câu.",
+        ]
     if measured:
         cases = production["failures"][:5]
         lines += ["", "## Bottom-5 theo trung bình bốn metric RAGAS", ""]
@@ -72,9 +82,41 @@ def main():
         ]
         if measured:
             lines += [
+                f"- **Worst score:** {case['score']:.4f}; **Mean four metrics:** {case['average_score']:.4f}",
                 f"- **Error Tree:** {case['error_tree']}",
-                f"- **Root cause:** {case['diagnosis']}",
+                f"- **Diagnostic hypothesis:** {case['diagnosis']}; cần kiểm tra context và đáp án trước khi kết luận.",
                 f"- **Suggested fix:** {case['suggested_fix']}",
+                "",
+            ]
+            question = case["question"]
+            if "Senior" in question:
+                review = "Đáp án đúng 18 ngày phép nhưng thiếu lương Senior 20–35 triệu. Context chỉ có chính sách phép, chưa đủ bảng lương. Context precision 0 phản ánh cách judge chấm câu hỏi hai phần; không kết luận toàn bộ context vô ích."
+                fix = "Tách truy vấn phép và lương; giữ parent từ cả hai nguồn, kiểm tra đủ từng phần trước khi sinh đáp án."
+                tree = "Câu hỏi hai phần → kiểm tra đủ nguồn → thiếu bảng lương → retrieval/parent expansion → đáp án thiếu phần lương."
+            elif "25 triệu" in question:
+                review = "Đáp án 100%, tức 25 triệu, khớp ground truth và chính sách hoàn trả trong một năm. Faithfulness 0 là số đo thực tế. Có thể judge không coi số tiền trong câu hỏi là bằng chứng context; đây là giả thuyết cần trace, không phải bằng chứng hallucination."
+                fix = "Trình bày điều kiện 8 tháng < 1 năm và công thức 25 triệu × 100%; kiểm tra judge trace trước khi thay đổi pipeline. Không tự sửa điểm."
+                tree = "Đáp án khớp ground truth → kiểm tra điều kiện và dữ kiện trong câu hỏi → kiểm tra judge trace → phân biệt lỗi evaluator với lỗi generation."
+            elif "tạm ứng" in question:
+                review = "Đáp án ghi 5.000 đồng, trong khi 15.000.000 × 0,02 × (20−15)/30 = 50.000 đồng. Đây là lỗi số học xác minh được; các điều kiện phí trong câu trả lời vẫn đúng."
+                fix = "Tính bằng calculator hoặc công thức xác định; kiểm tra số tiền cuối trước khi LLM giải thích."
+                tree = "Đủ điều kiện và số liệu → kiểm tra phép tính → kết quả lệch 10 lần → generation/arithmetic."
+            elif "MFA" in question:
+                review = "Đáp án yêu cầu MFA đúng bản hiện hành. Ground truth có thêm lịch sử v1 không yêu cầu MFA, nhưng context thiếu phần lịch sử và có nguồn mua sắm không liên quan. Recall 0,5 không chứng minh đáp án hiện hành sai."
+                fix = "Gắn metadata phiên bản; chỉ lấy nguồn lịch sử khi cần đối chiếu, loại context mua sắm không liên quan."
+                tree = "Đáp án hiện hành đúng → đối chiếu ground truth → thiếu thông tin lịch sử → context recall/retrieval."
+            elif "Mật khẩu" in question:
+                review = "Đáp án 12 ký tự đúng bản v2.0. Context đầu là bản v1.0 yêu cầu 8 ký tự, sau đó mới đến v2.0; precision 0,5 phù hợp việc còn một bản đã thay thế."
+                fix = "Lọc trạng thái đã thay thế và ưu tiên ngày hiệu lực mới nhất nếu câu hỏi không yêu cầu lịch sử."
+                tree = "Đáp án đúng → kiểm tra thứ tự nguồn → bản v1.0 đã thay thế đứng trước → context precision/version filtering."
+            else:
+                review = "Đối chiếu đáp án với ground truth và context trước khi coi diagnostic tự động là nguyên nhân đã xác minh."
+                fix = case["suggested_fix"]
+                tree = case["error_tree"]
+            lines += [
+                f"- **Đối chiếu thủ công:** {review}",
+                f"- **Error Tree sau đối chiếu:** {tree}",
+                f"- **Hướng sửa cụ thể:** {fix}",
                 "",
             ]
         else:
@@ -125,4 +167,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--update", action="store_true", help="Explicitly replace analysis from a measured report")
+    main(update=parser.parse_args().update)

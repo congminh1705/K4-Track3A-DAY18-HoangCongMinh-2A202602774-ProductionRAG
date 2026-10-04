@@ -23,11 +23,14 @@ SEMANTIC_MODEL = os.getenv("SEMANTIC_MODEL", "all-MiniLM-L6-v2")
 RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 MODEL_DTYPE = os.getenv("MODEL_DTYPE", "float32")
 MODEL_CACHE_DIR = os.path.join(ROOT_DIR, ".model-cache")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL") or None
+GEMINI_PROVIDER = bool(OPENAI_BASE_URL and "generativelanguage.googleapis.com" in OPENAI_BASE_URL)
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3.1-flash-lite" if GEMINI_PROVIDER else "gpt-4o-mini")
 EVAL_EMBEDDING_MODEL = os.getenv(
     "EVAL_EMBEDDING_MODEL",
-    "openai/text-embedding-3-small"
+    "gemini-embedding-001"
+    if GEMINI_PROVIDER
+    else "openai/text-embedding-3-small"
     if OPENAI_BASE_URL and "openrouter.ai" in OPENAI_BASE_URL
     else "text-embedding-3-small",
 )

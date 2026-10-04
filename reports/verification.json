@@ -47,17 +47,41 @@
   ],
   "historical_successful_run": true,
   "current_submission_state": {
-    "production_report": "measured_summary_recovered",
-    "measured_checkpoints": 11,
-    "remaining_questions": 9,
-    "blocker": "OpenRouter HTTP 402: insufficient credits; account never purchased credits",
-    "github_public": true,
-    "full_per_question_report_available": false,
-    "tests_passed": 49,
-    "tests_total": 49,
+    "production_report": "measured",
+    "measured_questions": 20,
+    "per_question_results": 20,
+    "remaining_questions": 0,
+    "evaluation_mode": "mixed_evaluators",
+    "provider_counts": {
+      "OpenRouter": 11,
+      "Gemini": 9
+    },
+    "aggregate": {
+      "faithfulness": 0.9199999999999999,
+      "answer_relevancy": 0.8484977516244232,
+      "context_precision": 0.8999999999149999,
+      "context_recall": 0.925
+    },
+    "baseline_aggregate": {
+      "faithfulness": 0.8404761904761905,
+      "answer_relevancy": 0.6736823974315934,
+      "context_precision": 0.9249999999404167,
+      "context_recall": 0.925
+    },
+    "tests_passed": 50,
+    "tests_total": 50,
     "ruff": "passed",
     "pip_check": "No broken requirements found",
-    "submission_check_exit_code": 1,
-    "submission_check_remaining_error": "Full Production RAGAS report requires API credit"
+    "github_public": true,
+    "comparison_limitation": "Baseline uses OpenRouter; Production combines OpenRouter and Gemini. Delta is not a controlled same-evaluator comparison.",
+    "remaining_known_limitations": [
+      "Senior answer omits salary",
+      "Advance-fee answer contains an arithmetic error",
+      "Two scanned PDFs need OCR",
+      "Qdrant uses the in-memory fallback because Docker is unavailable"
+    ],
+    "submission_check_exit_code": 0,
+    "submission_check_status": "passed",
+    "full_per_question_report_available": true
   }
 }

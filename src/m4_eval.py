@@ -15,6 +15,8 @@ from dataclasses import dataclass
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import TEST_SET_PATH
 
+_GEMINI_LAST_REQUEST = 0.0
+
 
 @dataclass
 class EvalResult:
@@ -107,10 +109,12 @@ def evaluate_ragas(
     try:
         from copy import deepcopy
 
+        import httpx
         from datasets import Dataset
         from langchain_core.callbacks import BaseCallbackHandler
         from langchain_openai import ChatOpenAI, OpenAIEmbeddings
         from ragas import evaluate
+        from ragas.llms import LangchainLLMWrapper
         from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
         from ragas.run_config import RunConfig
 
@@ -120,6 +124,39 @@ def evaluate_ragas(
             def on_llm_error(self, error, **kwargs):
                 failures.append(error)
 
+        class SingleCandidateLLM(LangchainLLMWrapper):
+            async def agenerate_text(self, prompt, n=1, **kwargs):
+                import asyncio
+                import time
+
+                global _GEMINI_LAST_REQUEST
+                result = None
+                for _ in range(n):
+                    await asyncio.sleep(max(0, 15 - (time.monotonic() - _GEMINI_LAST_REQUEST)))
+                    _GEMINI_LAST_REQUEST = time.monotonic()
+                    additional = await super().agenerate_text(prompt, n=1, **kwargs)
+                    if result is None:
+                        result = additional
+                    else:
+                        result.generations[0].extend(additional.generations[0])
+                return result
+
+        gemini = bool(OPENAI_BASE_URL and "generativelanguage.googleapis.com" in OPENAI_BASE_URL)
+        # RAGAS 0.1 creates a fresh event loop per evaluation. Avoid pooled
+        # connections bound to a loop that has already closed on Windows.
+        async_http = httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=0))
+        judge = ChatOpenAI(
+            model=LLM_MODEL,
+            api_key=OPENAI_API_KEY,
+            base_url=OPENAI_BASE_URL,
+            temperature=0,
+            max_tokens=4096 if gemini else 1024,
+            model_kwargs={"reasoning_effort": "low"} if gemini else {},
+            http_async_client=async_http,
+        )
+        if gemini:
+            judge = SingleCandidateLLM(judge)
+
         dataset = Dataset.from_dict(
             {"question": questions, "answer": answers, "contexts": contexts, "ground_truth": ground_truths}
         )
@@ -128,28 +165,28 @@ def evaluate_ragas(
             " Generate the reconstructed question in the same language as the answer; "
             "use Vietnamese for Vietnamese answers. Keep the noncommittal criteria unchanged."
         )
-        result = evaluate(
-            dataset,
-            metrics=metrics,
-            llm=ChatOpenAI(
-                model=LLM_MODEL,
-                api_key=OPENAI_API_KEY,
-                base_url=OPENAI_BASE_URL,
-                temperature=0,
-                max_tokens=1024,
-            ),
-            embeddings=OpenAIEmbeddings(
-                model=EVAL_EMBEDDING_MODEL,
-                api_key=OPENAI_API_KEY,
-                base_url=OPENAI_BASE_URL,
-                check_embedding_ctx_length=False,
-                request_timeout=30,
-                max_retries=1,
-            ),
-            run_config=RunConfig(timeout=60, max_retries=1, max_workers=1),
-            raise_exceptions=False,
-            callbacks=[CaptureErrors()],
-        )
+        try:
+            result = evaluate(
+                dataset,
+                metrics=metrics,
+                llm=judge,
+                embeddings=OpenAIEmbeddings(
+                    model=EVAL_EMBEDDING_MODEL,
+                    api_key=OPENAI_API_KEY,
+                    base_url=OPENAI_BASE_URL,
+                    check_embedding_ctx_length=False,
+                    request_timeout=30,
+                    max_retries=1,
+                    http_async_client=async_http,
+                ),
+                run_config=RunConfig(timeout=180, max_retries=2, max_workers=1),
+                raise_exceptions=False,
+                callbacks=[CaptureErrors()],
+            )
+        finally:
+            import asyncio
+
+            asyncio.run(async_http.aclose())
         rows = result.to_pandas().to_dict(orient="records")
         per_question = []
         for row in rows:
@@ -169,6 +206,7 @@ def evaluate_ragas(
             "configuration": {
                 "llm_model": LLM_MODEL,
                 "embedding_model": EVAL_EMBEDDING_MODEL,
+                "provider_url": OPENAI_BASE_URL,
                 "reconstructed_question_language": "answer_language",
             },
         }

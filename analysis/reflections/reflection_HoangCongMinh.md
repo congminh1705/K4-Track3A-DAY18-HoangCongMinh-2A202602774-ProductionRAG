@@ -53,43 +53,32 @@ Rủi ro: chính sách cũ/mới trộn nhau, câu hỏi mơ hồ, multi-hop c�
 Timeline: tuần 1 bổ sung version metadata và OCR với kiểm tra chất lượng; tuần 2 đánh giá
 retrieval, sửa bottom-5 và đo latency; tuần 3 xây giao diện tra cứu, citations và kiểm thử truy cập.
 
-## Trạng thái xác minh
+## Final verification
 
-Trạng thái sau khi khôi phục báo cáo: code đạt 49/49 tests; bảng bên dưới là kết quả
-lịch sử của lần chạy thành công. JSON gốc có điểm từng câu đã bị ghi đè. Đã đo lại
-và lưu checkpoint cho 11/20 câu; 9 câu còn lại bị chặn bởi OpenRouter HTTP 402
-(tài khoản chưa mua credit). Report hiện là `measured_summary_recovered`, chưa đủ
-để xác nhận bài sẵn sàng nộp. Cần hoàn tất đánh giá và cập nhật bottom-5 trước khi nộp.
-
-Xem `reports/verification.json` và `reports/ragas_report.json` cho kết quả cập nhật.
-Nếu evaluation.status là unavailable, bảng điểm RAGAS và bottom-5 vẫn chưa đủ điều kiện nộp.
-
-
-Kết quả cuối sau khi được đồng ý gửi dữ liệu tới OpenRouter: **47/47 tests pass**,
-`pip check` không có dependency lỗi, ruff sạch. `python main.py --resume` và
-`python check_lab.py` đều có Python exit code 0; baseline tương thích đã được dùng lại.
+All 20 Production questions have measured scores. Tests: 50/50; pip check and ruff passed.
+Per the authorized scope, baseline and 11 measured OpenRouter questions were retained;
+only the remaining 9 questions were sent to Gemini (gemini-3.1-flash-lite, gemini-embedding-001).
+The report records each question's evaluator. Delta is descriptive, not a controlled
+same-evaluator comparison; it cannot establish improvement caused only by the pipeline.
 
 | Metric | Baseline | Production | Delta |
 |---|---:|---:|---:|
-| faithfulness | 0.7958 | 0.9200 | +0.1242 |
-| answer_relevancy | 0.6571 | 0.7943 | +0.1372 |
-| context_precision | 0.9250 | 0.9500 | +0.0250 |
-| context_recall | 0.9250 | 0.9500 | +0.0250 |
+| faithfulness | 0.8405 | 0.9200 | +0.0795 |
+| answer_relevancy | 0.6737 | 0.8485 | +0.1748 |
+| context_precision | 0.9250 | 0.9000 | -0.0250 |
+| context_recall | 0.9250 | 0.9250 | +0.0000 |
 
-Lần chạy online tiếp tục production mất 537.0 giây;
-reranking trung bình 12.87 giây/câu. Cả bốn metric vượt 0.75, nhưng review thủ công
-vẫn phát hiện thiếu lương trong câu multi-hop và lỗi số học tạm ứng: LLM trả 5.000,
-trong khi phép tính pro-rata theo tháng 30 ngày là 50.000 VNĐ. Bài học là cần kiểm tra
-kết quả numeric độc lập và đa dạng parent context; không dùng aggregate như cam kết
-mọi đáp án đều đúng.
+Measured bottom-5: Senior leave/salary, tuition repayment, advance fee, MFA, password length.
+The Senior answer omits salary. The advance fee is 5,000 instead of 50,000 VND:
+15,000,000 * 0.02 * 5/30 = 50,000. These are observed limitations, not claimed fixes.
+Tuition repayment matches ground truth despite faithfulness 0; judge behavior is a hypothesis
+until its trace is reviewed. See failure_analysis.md for evidence, Error Trees and proposed fixes.
 
-Evaluator ban đầu dùng MiniLM cục bộ và tái tạo câu hỏi tiếng Anh, khiến câu thử đúng
-có relevancy khoảng 0.084. Đổi sang text-embedding-3-small qua OpenRouter và yêu cầu
-câu hỏi tái tạo cùng ngôn ngữ đưa câu thử gần 1.0. Đây là sanity check evaluator;
-điểm production trong bảng lấy từ câu trả lời pipeline trên toàn bộ 20 câu, không lấy
-câu trả lời ground truth để generation.
+API debugging: OpenRouter HTTP 402 was caused by insufficient account credit, not the key limit.
+Gemini required its own endpoint and embedding model. Multiple candidates were not enabled,
+so the evaluator generates them sequentially. Rate-limit errors required spacing requests;
+the Windows event-loop warning was addressed with explicit HTTP client lifecycle management.
+Successful per-question checkpoints survive interruptions and are matched to input/configuration.
 
-Thêm cache enrichment theo hash và checkpoint câu trả lời sau khi một phiên bị ngắt.
-Cache lưu atomic, không chứa API key; kiểm tra hồi quy xác nhận không gọi API lần hai
-cho cùng chunk và không dùng lại câu trả lời khi fingerprint khác. Môi trường pytest
-được cấu hình thư mục tạm trong workspace để tránh WinError 5 trên Temp của Windows.
+The four current aggregates exceed the rubric thresholds, but do not guarantee every answer
+is correct or a grade. The personal-project plan above remains proposed work.
