@@ -1,4 +1,8 @@
 .env
+.venv/
+.venv-linux-backup/
+.model-cache/
+*.log
 .DS_Store
 __pycache__/
 *.pyc
@@ -6,3 +10,13 @@ __pycache__/
 qdrant_data/
 *.egg-info/
 CODELAB.md
+
+reports/enrichment_cache.json
+reports/production_answers.json
+reports/*.tmp
+
+.pytest-tmp/
+.ruff_cache/
+reports/*.last_failed.json
+reports/*.previous.json
+reports/.evaluation-cache/

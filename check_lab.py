@@ -60,9 +60,14 @@ def run_tests() -> tuple[int, int]:
     """Run pytest and return (passed, total)."""
     try:
         import re
+        test_environment = os.environ.copy()
+        test_environment.update({
+            "LAB_OFFLINE": "1", "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
+            "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
+        })
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=no", "-q"],
-            capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace"
+            capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace", env=test_environment
         )
         lines = result.stdout.strip().split("\n")
         summary = lines[-1] if lines else ""
@@ -78,6 +83,7 @@ def run_tests() -> tuple[int, int]:
 
 
 def validate():
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     print("🔍 Kiểm tra bài nộp Lab 18: Production RAG\n")
     errors = 0
 
@@ -99,7 +105,8 @@ def validate():
 
     # 3. Analysis
     print("\n📝 Analysis:")
-    check_file("analysis/failure_analysis.md")
+    if not check_file("analysis/failure_analysis.md"):
+        errors += 1
 
     # 4. Individual reflections
     print("\n👤 Individual reflections:")
@@ -116,6 +123,7 @@ def validate():
         for r in set(reflections):
             print(f"  ✅ {r}")
     else:
+        errors += 1
         print(f"  ⚠️  Chưa có file reflection cá nhân (đặt tại {ref_dir}/reflection_[HọTên].md hoặc analysis/reflection_[HọTên].md)")
 
     # 5. TODO count
@@ -124,16 +132,28 @@ def validate():
     if todo_count == 0:
         print("  ✅ Không còn TODO nào")
     else:
+        errors += 1
         print(f"  ⚠️  Còn {todo_count} TODO chưa implement")
 
     # 6. Tests
     print("\n🧪 Auto-tests:")
     passed, total = run_tests()
+    if total == 0 or passed != total:
+        errors += 1
     if total > 0:
         pct = passed / total * 100
         print(f"  {'✅' if pct >= 80 else '⚠️'} {passed}/{total} tests passed ({pct:.0f}%)")
     else:
         print("  ⚠️  Không chạy được tests")
+
+    try:
+        with open("reports/ragas_report.json", encoding="utf-8") as f:
+            report = json.load(f)
+        if report.get("evaluation", {}).get("status") != "measured" or report.get("num_questions", 0) == 0:
+            print("  ❌ RAGAS chưa đo thành công; không thể xác nhận bài sẵn sàng nộp.")
+            errors += 1
+    except (OSError, ValueError):
+        pass
 
     # 7. Summary
     print("\n" + "=" * 50)
@@ -142,7 +162,8 @@ def validate():
     else:
         print(f"❌ Có {errors} lỗi. Sửa trước khi nộp.")
     print("=" * 50)
+    return errors
 
 
 if __name__ == "__main__":
-    validate()
+    sys.exit(1 if validate() else 0)

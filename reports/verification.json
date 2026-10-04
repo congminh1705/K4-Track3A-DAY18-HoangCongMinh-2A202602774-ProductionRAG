@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-05",
+  "python": "3.11.15",
+  "authorization": {
+    "provider": "OpenRouter",
+    "user_confirmed": true
+  },
+  "tests": {
+    "passed": 47,
+    "total": 47,
+    "mode": "offline_unit_tests"
+  },
+  "pip_check": "No broken requirements found",
+  "ruff": "passed",
+  "remaining_todos": 0,
+  "pipeline": {
+    "python_exit_code": 0,
+    "total_seconds": 536.977,
+    "mode": "online",
+    "model_dtype": "float32",
+    "resume": true
+  },
+  "evaluation": {
+    "status": "measured",
+    "num_questions": 20,
+    "aggregate": {
+      "faithfulness": 0.9199999999999999,
+      "answer_relevancy": 0.7943030376673512,
+      "context_precision": 0.9499999999199996,
+      "context_recall": 0.95
+    },
+    "baseline_aggregate": {
+      "faithfulness": 0.7958333333333333,
+      "answer_relevancy": 0.6571278870505782,
+      "context_precision": 0.9249999999404167,
+      "context_recall": 0.925
+    }
+  },
+  "submission_check": {
+    "python_exit_code": 0,
+    "status": "passed"
+  },
+  "known_limitations": [
+    "Multi-hop Senior answer omitted salary; numeric advance-fee answer made an arithmetic error. See failure_analysis.md.",
+    "Qdrant uses local in-memory fallback because Docker is unavailable.",
+    "Two scanned PDFs need OCR; text-layer ingestion follows the assignment scaffold."
+  ],
+  "historical_successful_run": true,
+  "current_submission_state": {
+    "production_report": "measured_summary_recovered",
+    "measured_checkpoints": 11,
+    "remaining_questions": 9,
+    "blocker": "OpenRouter HTTP 402: insufficient credits; account never purchased credits",
+    "github_public": true,
+    "full_per_question_report_available": false,
+    "tests_passed": 49,
+    "tests_total": 49,
+    "ruff": "passed",
+    "pip_check": "No broken requirements found",
+    "submission_check_exit_code": 1,
+    "submission_check_remaining_error": "Full Production RAGAS report requires API credit"
+  }
+}

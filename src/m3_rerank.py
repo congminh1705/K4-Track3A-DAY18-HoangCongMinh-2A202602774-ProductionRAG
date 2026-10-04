@@ -2,7 +2,10 @@ from __future__ import annotations
 
 """Module 3: Reranking — Cross-encoder top-20 → top-3 + latency benchmark."""
 
-import os, sys, time
+import os
+import sys
+import time
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
@@ -29,44 +32,81 @@ class CrossEncoderReranker:
 
     def _load_model(self):
         if self._model is None:
-            # TODO: Load cross-encoder model
-            # from sentence_transformers import CrossEncoder
-            # self._model = CrossEncoder(self.model_name)
-            #
-            # ⚠️ LƯU Ý: Dùng sentence_transformers.CrossEncoder, KHÔNG dùng FlagEmbedding.
-            # FlagReranker crash với transformers>=5.0 (XLMRobertaTokenizer lỗi).
-            pass
+            from config import MODEL_CACHE_DIR
+
+            self._model = _cached_cross_encoder(self.model_name, MODEL_CACHE_DIR)
         return self._model
 
     def rerank(self, query: str, documents: list[dict], top_k: int = RERANK_TOP_K) -> list[RerankResult]:
         """Rerank documents: top-20 → top-k."""
-        # TODO: Implement reranking
-        # 1. if not documents: return []
-        # 2. model = self._load_model()
-        # 3. pairs = [(query, doc["text"]) for doc in documents]
-        # 4. scores = model.predict(pairs)
-        # 5. if isinstance(scores, (int, float)): scores = [scores]
-        # 6. scored = sorted(zip(scores, documents), key=lambda x: x[0], reverse=True)
-        # 7. Return [RerankResult(text=..., original_score=doc.get("score", 0.0),
-        #            rerank_score=float(score), metadata=..., rank=i)
-        #            for i, (score, doc) in enumerate(scored[:top_k])]
-        return []
+        if not documents or top_k <= 0:
+            return []
+        import numpy as np
+
+        scores = np.asarray(self._load_model().predict([(query, d["text"]) for d in documents], batch_size=4)).reshape(
+            -1
+        )
+        ranked = sorted(zip(scores, documents), key=lambda item: float(item[0]), reverse=True)
+        return [
+            RerankResult(d["text"], float(d.get("score", 0)), float(score), d.get("metadata", {}), i)
+            for i, (score, d) in enumerate(ranked[:top_k])
+        ]
+
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=2)
+def _cached_cross_encoder(name, cache_dir):
+    import torch
+    from sentence_transformers import CrossEncoder
+
+    torch.set_num_threads(4)
+
+    from config import MODEL_DTYPE, OFFLINE
+
+    return CrossEncoder(
+        name,
+        cache_folder=cache_dir,
+        local_files_only=OFFLINE,
+        max_length=512,
+        model_kwargs={"torch_dtype": MODEL_DTYPE},
+    )
 
 
 class FlashrankReranker:
     """Lightweight alternative (<5ms). Optional."""
+
     def __init__(self):
         self._model = None
 
     def rerank(self, query: str, documents: list[dict], top_k: int = RERANK_TOP_K) -> list[RerankResult]:
-        # TODO (optional): from flashrank import Ranker, RerankRequest
-        # model = Ranker(); passages = [{"text": d["text"]} for d in documents]
-        # results = model.rerank(RerankRequest(query=query, passages=passages))
-        return []
+        if not documents or top_k <= 0:
+            return []
+        from flashrank import Ranker, RerankRequest
+
+        if self._model is None:
+            from config import MODEL_CACHE_DIR
+
+            self._model = Ranker(cache_dir=MODEL_CACHE_DIR)
+        passages = [{"id": i, "text": d["text"]} for i, d in enumerate(documents)]
+        ranked = self._model.rerank(RerankRequest(query=query, passages=passages))[:top_k]
+        return [
+            RerankResult(
+                r["text"],
+                float(documents[r["id"]].get("score", 0)),
+                float(r["score"]),
+                documents[r["id"]].get("metadata", {}),
+                i,
+            )
+            for i, r in enumerate(ranked)
+        ]
 
 
 def benchmark_reranker(reranker, query: str, documents: list[dict], n_runs: int = 5) -> dict:
     """Benchmark latency over n_runs. (Đã implement sẵn)"""
+    if n_runs <= 0:
+        raise ValueError("n_runs must be positive")
     times = []
     for _ in range(n_runs):
         start = time.perf_counter()

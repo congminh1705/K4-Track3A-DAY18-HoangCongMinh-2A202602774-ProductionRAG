@@ -148,3 +148,93 @@ K4-Track3A-Production-RAG/
   *(Ví dụ: `K4-Track3A-DAY18-NguyenVanAn-AI20K001-ProductionRAG`)*
 - **Hạn chót nộp bài:** **23h59 ngày diễn ra bài lab (GMT+7)** trên cổng VLearn LMS / Codelab.
 - **Chi tiết yêu cầu:** Xem tại [ASSIGNMENT.md](ASSIGNMENT.md) và [RUBRIC.md](RUBRIC.md).
+
+
+## Kết quả triển khai và chạy trên Windows
+
+Bài làm: **Hoàng Công Minh — 2A202602774**. Tên repository theo đề:
+`K4-Track3A-DAY18-HoangCongMinh-2A202602774-ProductionRAG`.
+Thư mục local được giữ nguyên để tránh làm hỏng đường dẫn đang sử dụng.
+
+- M1: cosine similarity, parent/child có ID theo nguồn, section Markdown giữ code block.
+- M2: Vietnamese BM25 + bge-m3 + Qdrant `query_points()` + RRF.
+- M3: CrossEncoder bge-reranker-v2-m3; có thêm Flashrank.
+- M4: RAGAS 4 metrics, lưu từng câu, bottom-5 và trạng thái đo.
+- M5: combined 1 call/chunk, có fallback extractive; summary và HyQA được đưa vào văn bản index.
+- Pipeline: retrieve/rerank child rồi mở rộng parent; lưu latency từng bước.
+
+Windows uses Python 3.11 in `.venv`; the obsolete Linux environment backup has been removed. Installed dependencies are pinned in `requirements-lock.txt`. `transformers<5` và `datasets<3` giữ tương thích với stack RAGAS 0.1.
+
+```powershell
+# Cài trên máy mới có Python 3.11:
+py -3.11 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+Copy-Item .env.example .env
+# Điền key và endpoint của đúng nhà cung cấp trong .env.
+# OpenRouter: OPENAI_BASE_URL=https://openrouter.ai/api/v1
+#            LLM_MODEL=openai/gpt-4o-mini
+
+# Chạy khi đã đồng ý gửi dữ liệu lab đến nhà cung cấp API:
+.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe check_lab.py
+
+# Chạy cục bộ, không gọi LLM/RAGAS qua API:
+$env:LAB_OFFLINE="1"
+$env:HF_HUB_OFFLINE="1" # Chỉ sau khi đã tải model về .model-cache
+.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe -m pytest tests/ -q
+# Bỏ chế độ offline khi cần đánh giá thật:
+Remove-Item Env:LAB_OFFLINE -ErrorAction SilentlyContinue
+Remove-Item Env:HF_HUB_OFFLINE -ErrorAction SilentlyContinue
+```
+
+Nếu Docker có sẵn, dùng `docker compose up -d`; nếu không kết nối được Qdrant,
+client dùng in-memory cho lần chạy hiện tại. Model mặc định cần khoảng vài GB
+đĩa trống và chạy CPU có thể chậm. Hai PDF scan cần OCR trước khi truy vấn;
+loader hiện chỉ đọc text layer theo yêu cầu scaffold.
+
+RAGAS dùng LLM và embedding `text-embedding-3-small` qua endpoint đã cấu hình
+(OpenRouter dùng tên `openai/text-embedding-3-small`). Câu hỏi tái tạo để đo
+Answer Relevancy dùng cùng ngôn ngữ với câu trả lời. Giữ cùng cấu hình evaluator
+khi so sánh baseline và production; cấu hình được ghi trong JSON report.
+Khi offline hoặc API lỗi, báo cáo có `evaluation.status=unavailable`, điểm 0 là
+placeholder chưa đo, không được diễn giải thành điểm RAGAS thật.
+`check_lab.py` sẽ báo chưa sẵn sàng nộp nếu chưa có evaluation đo thành công.
+
+Model BGE mặc định dùng `MODEL_DTYPE=float32` sau khi đã xác minh trên CPU hiện tại.
+Có thể đặt `MODEL_DTYPE=bfloat16` khi cần giảm RAM; batch 4 và sequence tối đa
+512 token. Nội dung vượt giới hạn sẽ bị model truncate nên cần đánh giá recall
+khi dùng corpus dài hơn.
+
+API tham khảo: [Qdrant Python client](https://github.com/qdrant/qdrant-client) và
+[RAGAS evaluate](https://docs.ragas.io/en/v0.1.21/references/evaluate/).
+
+Trên máy hạn chế pagefile, evaluation lấy candidate cho toàn bộ test set trước,
+giải phóng dense model rồi mới nạp reranker. Query đơn cũng giải phóng model
+trước khi chuyển giai đoạn. Latency bao gồm chi phí nạp lại khi chạy query đơn.
+
+`main.py` chỉ tạo `analysis/failure_analysis.md` nếu file chưa tồn tại; bài phân tích
+đã viết được giữ nguyên. Có thể chạy riêng `python render_lab_report.py`.
+Khi report thay đổi, cần đối chiếu và cập nhật phân tích theo kết quả thực tế.
+
+
+Endpoint embedding OpenRouter đã được kiểm tra theo
+[tài liệu chính thức](https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings).
+Sau khi được chấp thuận gửi corpus lab, đã chạy evaluation online thay cho report chưa đo.
+Historical successful-run metrics and exit status are retained in `reports/verification.json`. The recovered production report contains aggregate metrics only; original per-question scores are unavailable. Failed evaluations cannot overwrite a successful report, and existing analysis is preserved.
+
+Có thể dùng `python main.py --resume` khi phiên chạy bị ngắt. Baseline được dùng
+lại khi evaluator và bộ Q&A khớp; enrichment/câu trả lời lưu theo fingerprint.
+Combined enrichment chạy tối đa 4 request song song, vẫn 1 request cho mỗi chunk.
+Đặt `ENRICHMENT_WORKERS=1` nếu cần chạy tuần tự. Cache chỉ dùng lại trong chế độ
+online và nằm trong reports, không chứa API key.
+
+### Tiếp tục đánh giá khi API bị ngắt
+
+Chạy `python main.py --eval-only` để đánh giá các câu trả lời đã lưu, không cần
+tải lại mô hình hoặc dựng lại index. Mỗi câu đo thành công có checkpoint riêng
+trong `reports/.evaluation-cache/` (Git bỏ qua). Checkpoint chỉ được dùng lại khi
+câu hỏi, đáp án, context, ground truth và cấu hình evaluator khớp.
+RAGAS chạy tuần tự, giới hạn output 1.024 tokens; lỗi một câu không được ghi đè
+report thành công và không làm mất các câu đã đo. HTTP 402 cần kiểm tra số dư
+tài khoản API, không phải chỉ hạn mức của key.
